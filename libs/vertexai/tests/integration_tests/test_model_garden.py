@@ -9,6 +9,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.outputs import LLMResult
+from langchain_core.pydantic_v1 import BaseModel
 
 from langchain_google_vertexai.model_garden import (
     ChatAnthropicVertex,
@@ -159,3 +160,31 @@ async def test_anthropic_async() -> None:
     )
     assert isinstance(response, AIMessage)
     assert isinstance(response.content, str)
+
+
+def test_anthropic_with_structured_output() -> None:
+    project = os.environ["PROJECT"]
+    location = "us-central1"
+
+    class MyModel(BaseModel):
+        name: str
+        age: int
+
+    message = HumanMessage(content="My name is Erick and I am 27 years old")
+    llm = ChatAnthropicVertex(
+        project=project,
+        location=location,
+    )
+    model = llm.with_structured_output(MyModel)
+    response = model.invoke([message], model_name="claude-3-sonnet@20240229")
+    assert isinstance(response, MyModel)
+    assert response == MyModel(name="Erick", age=27)
+
+    model = llm.with_structured_output(
+        {"name": "MyModel", "description": "MyModel", "parameters": MyModel.schema()}
+    )
+    response = model.invoke([message], model_name="claude-3-sonnet@20240229")
+    assert response == {
+        "name": "Erick",
+        "age": 27,
+    }

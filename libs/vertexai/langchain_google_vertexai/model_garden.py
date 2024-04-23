@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from operator import itemgetter
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 from langchain_core.callbacks.manager import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
 )
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
     agenerate_from_stream,
@@ -17,6 +19,10 @@ from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
     BaseMessage,
+)
+from langchain_core.output_parsers import (
+    JsonOutputParser,
+    PydanticOutputParser,
 )
 from langchain_core.outputs import (
     ChatGeneration,
@@ -230,3 +236,32 @@ class ChatAnthropicVertex(_VertexAICommon, BaseChatModel):
                 if run_manager:
                     await run_manager.on_llm_new_token(text, chunk=chunk)
                 yield chunk
+
+    def with_structured_output(
+        self,
+        schema: Union[Dict, Type[BaseModel]],
+        *,
+        include_raw: bool = False,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, Union[Dict, BaseModel]]:
+        if kwargs:
+            raise ValueError(f"Unsupported kwargs: {kwargs}")
+
+        llm = self.bind(response_format={"type": "json_object"})
+        is_pydantic_class = isinstance(schema, type) and issubclass(schema, BaseModel)
+        parser: OutputParserLike = (
+            PydanticOutputParser(pydantic_object=schema)
+            if is_pydantic_class
+            else JsonOutputParser(schema)
+        )
+
+        if include_raw:
+            parser_with_fallback = RunnablePassthrough.assign(
+                parsed=itemgetter("raw") | parser, parsing_error=lambda _: None
+            ).with_fallbacks(
+                [RunnablePassthrough.assign(parsed=lambda _: None)],
+                exception_key="parsing_error",
+            )
+            return {"raw": llm} | parser_with_fallback
+        else:
+            return llm | parser
